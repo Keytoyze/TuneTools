@@ -1,11 +1,15 @@
-import sqlite3
-from .search_space import *
+import argparse
 import itertools
-import socket
+import json
 import os
+import socket
+import sqlite3
+import sys
 import time
-from . import db_utils
 from typing import Iterable
+
+from . import db_utils
+from .search_space import *
 
 
 def _construct_config(
@@ -20,6 +24,15 @@ def _construct_where(
         values: Iterable
 ):
     return dict(zip([x.db_name for x in parameters], values))
+
+
+def _print_config(
+        config: dict
+):
+    print("=" * 20)
+    for x in config.items():
+        print(str(x[0]) + ": " + str(x[1]))
+    print("=" * 20)
 
 
 def _prepare_db(
@@ -40,6 +53,24 @@ def _prepare_db(
 
         db_utils.ensure_column(conn, "RESULT",
                                [(x.db_name, x.base_type.db_type, x.default) for x in parameters])
+
+        # check parameter compatibility
+        old_param_files = os.path.join(".tune", "parameter.json")
+        if not os.path.isfile(old_param_files):
+            old_params = {}
+        else:
+            old_params = json.load(open(old_param_files))
+        for x in parameters:
+            if x.name in old_params:
+                if (x.base_type.db_type, str(x.default)) != tuple(old_params[x.name]):
+                    raise ValueError("Parameters compatibility check failed! Parameter %s "
+                                     "(type: %s, default: %s), but found: (type: %s, default: %s). "
+                                     "Please remove tune/parameter.json if you think it doesn't matter." % 
+                                     (x.name, old_params[x.name][0], old_params[x.name][1],
+                                      x.base_type.db_type, str(x.default)))
+            old_params[x.name] = (x.base_type.db_type, str(x.default))
+        with open(old_param_files, "w") as f:
+            json.dump(old_params, f, indent=2)
 
         param_space_sampled = [x.sample() for x in parameters]
         insert_param = []
@@ -64,6 +95,27 @@ def _prepare_db(
 
         db_utils.insert(conn, "RESULT", insert_param)
 
+def test(
+        obj_function,
+        parameters: list = None,
+        values: dict = None
+):
+    if parameters is None:
+        parameters = []
+    if values is None:
+        values = {}
+    config = {}
+    for p in parameters:
+        if p.name in values:
+            config[p.name] = values[p.name]
+        else:
+            config[p.name] = p.default
+    
+    _print_config(config)
+    result = obj_function(config)
+    print("=" * 20)
+    print("result: " + str(result))
+
 
 def run(
         obj_function,
@@ -75,7 +127,9 @@ def run(
     if parameters is None:
         parameters = []
 
-    conn = sqlite3.connect(database_file)
+    if not os.path.isdir(".tune"):
+        os.makedirs(".tune")
+    conn = sqlite3.connect(os.path.join(".tune", database_file))
     _prepare_db(conn, num_sample, parameters, filter_function)
 
     while True:
@@ -85,7 +139,7 @@ def run(
                                 where={"STATUS": "PENDING"},
                                 order_by="RANDOM()",
                                 limit=1, return_first=True)
-            parameter_tuple_to_run = None
+            values = None
             if x is not None:
                 db_id = x[0]
                 db_utils.update(conn, "RESULT",
@@ -98,13 +152,14 @@ def run(
                                 where={
                                     "ID": db_id
                                 })
-                parameter_tuple_to_run = x[1:]
+                values = x[1:]
 
-        if parameter_tuple_to_run is None:
+        if values is None:
             break
 
-        config = _construct_config(parameters, parameter_tuple_to_run)
+        config = _construct_config(parameters, values)
         start = time.time()
+        _print_config(config)
 
         results = obj_function(config)
 
@@ -128,24 +183,26 @@ def run(
     conn.close()
 
 
-if __name__ == "__main__":
-    def test(x):
-        print(">>> start")
-        time.sleep(10)
-        print(">>> end")
-        import random
-        return {
-            "result": x['alpha'] + x['beta'] + random.random() / 100,
-            "result2": "this is result2"
-        }
-
-
-    def filter(x):
-        return x['alpha'] != 0 and x['beta'] != 0
-
-
-    run(obj_function=test, filter_function=filter, num_sample=20, parameters=[
-        GridSearchSpace("alpha", base_type=Float, default=0.5, domain=[0.0, 0.3, 0.5]),
-        GridSearchSpace("beta", base_type=Float, default=0.5, domain=[0.0, 0.3, 0.5]),
-        # GridSearchSpace("gamma", base_type=String, default="xxx", domain=["ff", "ddd"])
-    ])
+def test_or_run(
+        obj_function,
+        filter_function=None,
+        num_sample=1,
+        database_file="tune.db",
+        parameters: list = None
+):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--test", action="store_true")
+    for x in parameters:
+        parser.add_argument("--" + x.name, type=x.base_type.python_type, default=None)
+    args = parser.parse_args()
+    if args.test:
+        print("Test!")
+        values = {}
+        for arg in vars(args):
+            value = getattr(args, arg)
+            if value is not None:
+                values[arg] = value
+        test(obj_function, parameters=parameters, values=values)
+    else:
+        print("Run!")
+        run(obj_function, filter_function, num_sample, database_file, parameters)

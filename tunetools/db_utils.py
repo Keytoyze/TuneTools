@@ -1,9 +1,18 @@
+import sys
 import sqlite3
+import time
 from typing import Iterable, Dict
 
 
+def _write_log(text):
+    # TODO: log to file
+    print("[DB]", "[" + time.ctime()+ "]", text, file=sys.stderr)
+    # with open(os.path.join(".tune", "db_journal.log"), "a") as f:
+    #     f.write(time.ctime() + ": " + text + "\n")
+
+
 def execute_sql(conn: sqlite3.Connection, sql: str, parameters: Iterable = None):
-    print("Execute: %s (%s)" % (sql, parameters))
+    _write_log("%s (%s)" % (sql, parameters))
     if parameters is not None:
         return conn.execute(sql, parameters)
     else:
@@ -18,7 +27,7 @@ def execute_sql_return_first(conn: sqlite3.Connection, sql: str, parameters: Ite
 
 
 def execute_many(conn: sqlite3.Connection, sql: str, seq_of_parameters: list = None):
-    print("Execute many: %s (%s)...[%d]" % (sql, seq_of_parameters[0], len(seq_of_parameters)))
+    _write_log("%s (%s)...[%d]" % (sql, seq_of_parameters[0], len(seq_of_parameters)))
     conn.executemany(sql, seq_of_parameters)
 
 
@@ -97,6 +106,8 @@ def count(conn: sqlite3.Connection, table_name: str, where: dict = None):
 
 
 def insert(conn: sqlite3.Connection, table_name: str, contents: list):
+    if len(contents) == 0:
+        return
     columns = contents[0].keys()
     sql = "INSERT INTO `%s` (%s) VALUES (%s)" % (
         table_name, ", ".join(columns),
