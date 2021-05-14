@@ -1,18 +1,17 @@
-import sys
+import os
 import sqlite3
 import time
 from typing import Iterable, Dict
 
 
 def _write_log(text):
-    # TODO: log to file
-    print("[DB]", "[" + time.ctime()+ "]", text, file=sys.stderr)
-    # with open(os.path.join(".tune", "db_journal.log"), "a") as f:
-    #     f.write(time.ctime() + ": " + text + "\n")
+    with open(os.path.join(".tune", "db_journal.log"), "a") as f:
+        f.write(time.ctime() + ": " + text + "\n")
 
 
 def execute_sql(conn: sqlite3.Connection, sql: str, parameters: Iterable = None):
-    _write_log("%s (%s)" % (sql, parameters))
+    if not sql.startswith("SELECT"):
+        _write_log("%s (%s)" % (sql, parameters))
     if parameters is not None:
         return conn.execute(sql, parameters)
     else:
@@ -68,6 +67,17 @@ def update(conn: sqlite3.Connection, table_name: str, put: dict,
     parameters = [v for _, v in replace_items] + [v for _, v in where_items]
 
     execute_sql(conn, sql, parameters)
+
+
+def delete(conn: sqlite3.Connection, table_name: str, where: dict):
+    where_items = where.items()
+
+    sql = 'DELETE FROM `%s`' % table_name + \
+          ' WHERE ' + " AND ".join(['%s = ?' % k for k, _ in where_items])
+
+    parameters = [v for _, v in where_items]
+
+    return execute_sql(conn, sql, parameters)
 
 
 def select(conn: sqlite3.Connection, table_name: str,

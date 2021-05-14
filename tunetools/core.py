@@ -4,7 +4,6 @@ import json
 import os
 import socket
 import sqlite3
-import sys
 import time
 from typing import Iterable
 
@@ -14,9 +13,12 @@ from .search_space import *
 
 def _construct_config(
         parameters: Iterable,
-        values: Iterable
+        values: Iterable,
+        force_values: dict
 ):
-    return dict(zip([x.name for x in parameters], values))
+    result = dict(zip([x.name for x in parameters], values))
+    result.update(force_values)
+    return result
 
 
 def _construct_where(
@@ -65,7 +67,7 @@ def _prepare_db(
                 if (x.base_type.db_type, str(x.default)) != tuple(old_params[x.name]):
                     raise ValueError("Parameters compatibility check failed! Parameter %s "
                                      "(type: %s, default: %s), but found: (type: %s, default: %s). "
-                                     "Please remove tune/parameter.json if you think it doesn't matter." % 
+                                     "Please remove tune/parameter.json if you think it doesn't matter." %
                                      (x.name, old_params[x.name][0], old_params[x.name][1],
                                       x.base_type.db_type, str(x.default)))
             old_params[x.name] = (x.base_type.db_type, str(x.default))
@@ -77,7 +79,7 @@ def _prepare_db(
 
         for param_tuple in itertools.product(*param_space_sampled):
             if filter_function is not None:
-                config = _construct_config(parameters, param_tuple)
+                config = _construct_config(parameters, param_tuple, {})
                 if not filter_function(config):
                     continue
             current_count = db_utils.count(conn, "RESULT",
@@ -95,22 +97,17 @@ def _prepare_db(
 
         db_utils.insert(conn, "RESULT", insert_param)
 
+
 def test(
         obj_function,
         parameters: list = None,
-        values: dict = None
+        force_values: dict = None
 ):
     if parameters is None:
         parameters = []
-    if values is None:
-        values = {}
-    config = {}
-    for p in parameters:
-        if p.name in values:
-            config[p.name] = values[p.name]
-        else:
-            config[p.name] = p.default
-    
+    if force_values is None:
+        force_values = {}
+    config = _construct_config(parameters, [x.default for x in parameters], force_values)
     _print_config(config)
     result = obj_function(config)
     print("=" * 20)
@@ -121,15 +118,17 @@ def run(
         obj_function,
         filter_function=None,
         num_sample=1,
-        database_file="tune.db",
-        parameters: list = None
+        parameters: list = None,
+        force_values: dict = None
 ):
     if parameters is None:
         parameters = []
+    if force_values is None:
+        force_values = {}
 
     if not os.path.isdir(".tune"):
         os.makedirs(".tune")
-    conn = sqlite3.connect(os.path.join(".tune", database_file))
+    conn = sqlite3.connect(os.path.join(".tune", "tune.db"))
     _prepare_db(conn, num_sample, parameters, filter_function)
 
     while True:
@@ -157,11 +156,18 @@ def run(
         if values is None:
             break
 
-        config = _construct_config(parameters, values)
+        config = _construct_config(parameters, values, force_values)
         start = time.time()
         _print_config(config)
 
-        results = obj_function(config)
+        results = None
+        try:
+            results = obj_function(config)
+        finally:
+            if results is None:
+                print("No result returned!! Set %s.STATUS = PENDING" % str(db_id))
+                with conn:
+                    db_utils.update(conn, "RESULT", put={"STATUS": "PENDING"}, where={"ID": db_id})
 
         duration = (time.time() - start) / 60
         with conn:
@@ -187,7 +193,6 @@ def test_or_run(
         obj_function,
         filter_function=None,
         num_sample=1,
-        database_file="tune.db",
         parameters: list = None
 ):
     parser = argparse.ArgumentParser()
@@ -195,14 +200,16 @@ def test_or_run(
     for x in parameters:
         parser.add_argument("--" + x.name, type=x.base_type.python_type, default=None)
     args = parser.parse_args()
+
+    force_values = {}
+    for arg in vars(args):
+        value = getattr(args, arg)
+        if value is not None:
+            force_values[arg] = value
     if args.test:
         print("Test!")
-        values = {}
-        for arg in vars(args):
-            value = getattr(args, arg)
-            if value is not None:
-                values[arg] = value
-        test(obj_function, parameters=parameters, values=values)
+        test(obj_function, parameters=parameters, force_values=force_values)
     else:
         print("Run!")
-        run(obj_function, filter_function, num_sample, database_file, parameters)
+        run(obj_function, filter_function=filter_function, num_sample=num_sample, parameters=parameters,
+            force_values=force_values)

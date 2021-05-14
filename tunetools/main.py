@@ -45,11 +45,22 @@ def terminate(args):
                                  where={"STATUS": "RUNNING"})
         for id, host, pid in cursor:
             if host == socket.gethostname():
-                os.kill(pid, 9)
+                try:
+                    os.kill(pid, 9)
+                    print("Terminate: id = %d, host = %s, pid = %d" % (id, host, pid))
+                except ProcessLookupError:
+                    print("Terminate: Not such process, id = %d, host = %s, pid = %d" % (id, host, pid))
                 db_utils.update(conn, "RESULT", put={"STATUS": "PENDING"}, where={"ID": id})
-                print("Terminate: id = %d, host = %s, pid = %d" % (id, host, pid))
             else:
                 print("Ignore: id = %d, host = %s, pid = %d" % (id, host, pid))
+    conn.close()
+
+
+def clean(args):
+    conn = _get_db_conn(args)
+    with conn:
+        result = db_utils.delete(conn, "RESULT", where={"STATUS": "PENDING"})
+        print("Remove %d pending tasks!" % result.rowcount)
     conn.close()
 
 
@@ -59,6 +70,7 @@ def main():
     subparser_list = [
         ('terminate', terminate),
         ('status', status),
+        ('clean', clean)
     ]
     for name, func in subparser_list:
         argparser = subparsers.add_parser(name)

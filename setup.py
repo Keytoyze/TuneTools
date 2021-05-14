@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='tunetools',
-    version='0.2.0',
+    version='0.4.2',
     description='A simple and powerful tune tool for AI experiments',
     author='Keytoize',
     author_email='cmx_1007@foxmail.com',
