@@ -30,7 +30,7 @@ if __name__ == "__main__":
         tt.GridSearchSpace("dataset", default="d1", domain=["d1", "d2", "d3"])
     ]
 
-    tt.set_verbose(False)
+    tt.set_verbose(True)
 
     # tt.run(obj_function=test, filter_function=filter, num_sample=20, parameters=search_spaces)
     # tt.test(obj_function=test, parameters=search_spaces, values={'alpha': 4})
