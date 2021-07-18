@@ -1,19 +1,21 @@
 target:
-  - max: ndcg_10_c_0
-  - ndcg10_15000
-  - step
-  - propensity_grad
+  - result
 group_by:
-  - ips_weight
-  - fgsm_ep
-find_best:
-  - fgsm_ep
+  - alpha
+  - beta
 where:
-  - "param_fgsm_ep != -1"
+  - param_model: 'model2'
+  - param_dataset: 'd1'
+  - param_lr: 0.01
+#find_best:
+#  - fgsm_ep
+#where:
+#  - "param_fgsm_ep != -1"
 #t_test:
 #  - baseline:
 #      - model: 'baseline'
+#      - dataset: 'd1'
 #  - equal_var: True
 draw:
-  - x: ips_weight
-  - y: propensity_grad
+  - x: alpha
+  - y: result

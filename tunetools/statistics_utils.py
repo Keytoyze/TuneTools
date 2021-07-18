@@ -1,5 +1,5 @@
 import yaml
-import db_utils
+from tunetools import db_utils
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -36,6 +36,8 @@ def parse_pandas(conn, yaml_path):
     find_best_params = check_param(yml_dict.get("find_best", []), total_params)
     if not has_direction and len(find_best_params) != 0:
         raise ValueError("Unknown direction for find best params: " + str(find_best_params))
+    if len(find_best_params) == 0:
+        find_best_params = [group_by_params[0]]
     current_params = group_by_params + find_best_params
     left_params = [x for x in total_params if x not in current_params]
 
