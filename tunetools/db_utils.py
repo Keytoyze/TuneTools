@@ -2,6 +2,7 @@ import os
 import sqlite3
 import time
 from typing import Iterable, Dict
+# from . import config
 
 
 def _write_log(text):
@@ -12,6 +13,8 @@ def _write_log(text):
 def execute_sql(conn: sqlite3.Connection, sql: str, parameters: Iterable = None):
     if not sql.startswith("SELECT"):
         _write_log("%s (%s)" % (sql, parameters))
+    # if config._verbose:
+    #     print(sql, parameters)
     if parameters is not None:
         return conn.execute(sql, parameters)
     else:
@@ -38,10 +41,15 @@ def create_table(conn: sqlite3.Connection, table_name: str, columns: Dict):
     execute_sql(conn, sql)
 
 
+def get_columns(conn: sqlite3.Connection, table_name: str):
+    cursor = select(conn, table_name)
+    descriptions = list(cursor.description)
+    return [description[0] for description in descriptions]
+
+
 def ensure_column(conn: sqlite3.Connection, table_name: str,
                   name_type_default: Iterable):
-    cursor = select(conn, table_name)
-    columns = [description[0] for description in cursor.description]
+    columns = get_columns(conn, table_name)
     for name, db_type, default in name_type_default:
         if name not in columns:
             if default is not None:

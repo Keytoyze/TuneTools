@@ -5,7 +5,7 @@ import sqlite3
 import time
 
 from tunetools import db_utils
-
+from tunetools import statistics_utils
 
 def _get_db_conn(args):
     db_path = os.path.join(os.getcwd(), ".tune", "tune.db")
@@ -63,18 +63,27 @@ def clean(args):
         print("Remove %d pending tasks!" % result.rowcount)
     conn.close()
 
+def statistics(args):
+    conn = _get_db_conn(args)
+    with conn:
+        statistics_utils.parse_pandas(conn, args.config)
 
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
-    subparser_list = [
-        ('terminate', terminate),
-        ('status', status),
-        ('clean', clean)
-    ]
-    for name, func in subparser_list:
-        argparser = subparsers.add_parser(name)
-        argparser.set_defaults(func=func)
+    
+    func_parser = subparsers.add_parser('terminate')
+    func_parser.set_defaults(func=terminate)
+
+    func_parser = subparsers.add_parser('status')
+    func_parser.set_defaults(func=status)
+
+    func_parser = subparsers.add_parser('clean')
+    func_parser.set_defaults(func=clean)
+
+    func_parser = subparsers.add_parser('statistics')
+    func_parser.set_defaults(func=statistics)
+    func_parser.add_argument("--config", type=str, default=None, required=True, help="path to the config yml file")
 
     args = parser.parse_args()
     args.func(args)

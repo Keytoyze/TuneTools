@@ -8,6 +8,7 @@ import time
 from typing import Iterable
 
 from . import db_utils
+from . import config
 from .search_space import *
 
 

@@ -15,13 +15,16 @@ class BaseSearchSpace:
 
 class GridSearchSpace(BaseSearchSpace):
 
-    def __init__(self, name: str, base_type: BaseType, default, domain: list):
+    def __init__(self, name: str, default, domain: list):
+        base_type = TypeMap[type(default)]
         super().__init__(name, base_type, default)
         self.domain = domain
         for x in domain:
-            if type(x) != base_type.python_type:
-                raise ValueError("type doesn't match: require " + str(
-                    base_type.python_type) + ", but find " + str(x))
+            try:
+                base_type.python_type(x)
+            except ValueError:
+                raise ValueError("type doesn't match: cannot convert " + str(x) + 
+                                 " to " + str(base_type.python_type))
 
     def sample(self) -> list:
         return self.domain

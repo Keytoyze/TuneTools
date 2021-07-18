@@ -4,26 +4,35 @@ import tunetools as tt
 if __name__ == "__main__":
     def test(x):
         print(">>> start: " + str(x))
-        time.sleep(10)
         print(">>> end")
         import random
+        extra = 0
+        if x['model'] == 'baseline':
+            extra = -0.5
         return {
-            "result": x['alpha'] + x['beta'] + random.random() / 100,
-            "result2": "this is result2"
+            "result": x['alpha'] + x['beta'] + x['lr'] + extra + random.random() / 100,
+            "result2": x['dataset'] + "!"
         }
 
 
     def filter(x):
-        return x['alpha'] != 0 and x['beta'] != 0
+        if x['model'] == 'baseline' and (x['alpha'] != 0.5 or x['beta'] != 1.5):
+            return False
+        if x['model'] == 'model1' and (x['alpha'] != 0.5 or x['beta'] != 1.5):
+            return False
+        return True
 
     search_spaces = [
-        tt.GridSearchSpace("alpha", base_type=tt.Float, default=0.5, domain=[0.0, 0.3, 0.5]),
-        tt.GridSearchSpace("beta", base_type=tt.Float, default=0.5, domain=[0.0, 0.3, 0.5]),
-        tt.GridSearchSpace("gamma", base_type=tt.Float, default=4, domain=[4.0]),
-        # GridSearchSpace("gamma", base_type=String, default="xxx", domain=["ff", "ddd"])
+        tt.GridSearchSpace("alpha", default=0.5, domain=[0, 0.3, 0.5]),
+        tt.GridSearchSpace("beta", default=1.5, domain=[0, 1.3, 1.5]),
+        tt.GridSearchSpace("lr", default=0.001, domain=[0.01, 0.001, 0.0001]),
+        tt.GridSearchSpace("model", default="baseline", domain=["baseline", "model1", "model2"]),
+        tt.GridSearchSpace("dataset", default="d1", domain=["d1", "d2", "d3"])
     ]
+
+    tt.set_verbose(False)
 
     # tt.run(obj_function=test, filter_function=filter, num_sample=20, parameters=search_spaces)
     # tt.test(obj_function=test, parameters=search_spaces, values={'alpha': 4})
-    tt.test_or_run(obj_function=test, filter_function=filter, num_sample=20, parameters=search_spaces)
+    tt.test_or_run(obj_function=test, filter_function=filter, num_sample=5, parameters=search_spaces)
 
