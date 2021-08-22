@@ -52,7 +52,6 @@ def parse_pandas(conn, yaml_path):
         elif type(where_condition) == str:
             where_clauses.append(where_condition)
     where_clauses_statement = " AND ".join(list(map(lambda x: "(%s)" % x, where_clauses)))
-    print(where_clauses_statement)
 
     statement = "SELECT * FROM RESULT"
     if len(where_clauses) != 0:
@@ -62,7 +61,6 @@ def parse_pandas(conn, yaml_path):
     result = list(cursor)
 
     data = pd.DataFrame(result, columns=columns)  # (group_by, find_best, num_sample) -> result
-    result = []
 
     def apply_find_best(df: pd.DataFrame):
         # input: (**group_by**, find_best, num_sample) -> result
@@ -107,7 +105,12 @@ def parse_pandas(conn, yaml_path):
         x = pd.Series(current_group)
         return x
 
-    group = data.groupby(by=["param_" + x for x in group_by_params], as_index=False).apply(apply_find_best)
+    raw_group = data.groupby(by=["param_" + x for x in group_by_params], as_index=False).apply(apply_find_best)
+    raw_group.index = range(len(raw_group))
+    group = raw_group.copy()
+    param_columns = list(map(lambda x: x.replace("param_", ""), filter(lambda x: x.startswith("param_"), group.columns)))
+    group.columns = map(lambda x: x.replace("param_", "").replace("ret_", ""), group.columns)
+    group = group.groupby(by=param_columns).agg('first')
 
     # t-test
     if 't_test' in yml_dict:
@@ -135,7 +138,7 @@ def parse_pandas(conn, yaml_path):
     draw_params = yml_dict.get("draw", None)
     if draw_params is not None:
         draw_params = dict(singleton_dict_to_tuple(x) for x in draw_params)
-        draw(group, draw_params)
+        draw(raw_group, draw_params)
 
 
 def draw(data: pd.DataFrame, draw_params):
@@ -151,9 +154,11 @@ def draw(data: pd.DataFrame, draw_params):
     for _, record in data.iterrows():
         legend = ", ".join([name.replace("param_", "") + ":" + str(record[name]) for name in legend_names])
         if legend not in legend_to_xy:
-            legend_to_xy[legend] = ([], [])
+            legend_to_xy[legend] = ([], [], [], [])
         legend_to_xy[legend][0].append(record[x_name])
         legend_to_xy[legend][1].append(record[y_name].mean())
+        legend_to_xy[legend][2].append(record[y_name].mean() + record[y_name].std())
+        legend_to_xy[legend][3].append(record[y_name].mean() - record[y_name].std())
     print(legend_to_xy)
     from matplotlib import pyplot as plt
 
@@ -165,6 +170,11 @@ def draw(data: pd.DataFrame, draw_params):
     for i, label in enumerate(legend_to_xy):
         plt.plot(legend_to_xy[label][0], legend_to_xy[label][1], label=label, marker=marker[i],
                  linestyle=line_style[i])
+        if 'deviation' not in draw_params or draw_params['deviation'] == True:
+            plt.fill_between(legend_to_xy[label][0],
+                             legend_to_xy[label][2],
+                             legend_to_xy[label][3],
+                             alpha=0.2)
 
     legend = plt.legend()
     legend.get_frame().set_facecolor('none')
@@ -218,4 +228,7 @@ class ArrayWrapper:
         return self.__repr__()
 
 
-
+if __name__ == "__main__":
+    import sys, sqlite3
+    conn = sqlite3.connect("G:\\Rank\\temp\\temp\\ULTRA2\\.tune\\tune.db")
+    parse_pandas(conn, "G:\\Rank\\temp\\temp\\ULTRA2\\config.yml")

@@ -42,7 +42,8 @@ def _prepare_db(
         conn: sqlite3.Connection,
         num_sample: int,
         parameters: Iterable,
-        filter_function
+        filter_function,
+        save_db=True
 ):
     with conn:
         db_utils.create_table(conn, "RESULT", {
@@ -57,46 +58,63 @@ def _prepare_db(
         db_utils.ensure_column(conn, "RESULT",
                                [(x.db_name, x.base_type.db_type, x.default) for x in parameters])
 
-        # check parameter compatibility
-        old_param_files = os.path.join(".tune", "parameter.json")
-        if not os.path.isfile(old_param_files):
-            old_params = {}
-        else:
-            old_params = json.load(open(old_param_files))
-        for x in parameters:
-            if x.name in old_params:
-                if (x.base_type.db_type, str(x.default)) != tuple(old_params[x.name]):
-                    raise ValueError("Parameters compatibility check failed! Parameter %s "
-                                     "(type: %s, default: %s), but found: (type: %s, default: %s). "
-                                     "Please remove tune/parameter.json if you think it doesn't matter." %
-                                     (x.name, old_params[x.name][0], old_params[x.name][1],
-                                      x.base_type.db_type, str(x.default)))
-            old_params[x.name] = (x.base_type.db_type, str(x.default))
-        with open(old_param_files, "w") as f:
-            json.dump(old_params, f, indent=2)
+    # check parameter compatibility
+    old_param_files = os.path.join(".tune", "parameter.json")
+    if not os.path.isfile(old_param_files):
+        old_params = {}
+    else:
+        old_params = json.load(open(old_param_files))
+    for x in parameters:
+        if x.name in old_params:
+            old_type, old_value = tuple(old_params[x.name])
+            try:
+                old_value = x.base_type.python_type(old_value)
+            except ValueError:
+                pass
+            if (x.base_type.db_type, x.base_type.python_type(x.default)) != (old_type, old_value):
+                raise ValueError("Parameters compatibility check failed! Parameter %s "
+                                 "(type: %s, default: %s), but found: (type: %s, default: %s). "
+                                 "Please remove tune/parameter.json if you think it doesn't matter." %
+                                 (x.name, old_params[x.name][0], old_params[x.name][1],
+                                  x.base_type.db_type, str(x.default)))
+        old_params[x.name] = (x.base_type.db_type, str(x.default))
+    with open(old_param_files, "w") as f:
+        json.dump(old_params, f, indent=2)
 
-        param_space_sampled = [x.sample() for x in parameters]
-        insert_param = []
+    param_space_sampled = [x.sample() for x in parameters]
+    insert_param = []
+    plan = []  # (parameters, number)
 
-        for param_tuple in itertools.product(*param_space_sampled):
-            if filter_function is not None:
-                config = _construct_config(parameters, param_tuple, {})
-                if not filter_function(config):
-                    continue
-            current_count = db_utils.count(conn, "RESULT",
-                                           where=_construct_where(parameters, param_tuple))
+    for param_tuple in itertools.product(*param_space_sampled):
+        if filter_function is not None:
+            config = _construct_config(parameters, param_tuple, {})
+            if not filter_function(config):
+                continue
+        where = _construct_where(parameters, param_tuple)
+        current_count = db_utils.count(conn, "RESULT",
+                                       where=where)
+        where['STATUS'] = 'TERMINATED'
+        current_done_count = db_utils.count(conn, "RESULT",
+                                       where=where)
+        if current_done_count < num_sample:
+            model = {}
+            model_db = {
+                "HOST": socket.gethostname(),
+                "PID": os.getpid()
+            }
+
+            for p, v in zip(parameters, param_tuple):
+                model[p.name] = v
+                model_db[p.db_name] = v
+
+            plan.append((model, num_sample - current_done_count))
             if current_count < num_sample:
-                model = {
-                    "HOST": socket.gethostname(),
-                    "PID": os.getpid()
-                }
+                insert_param.extend([model_db] * (num_sample - current_count))
 
-                for p, v in zip(parameters, param_tuple):
-                    model[p.db_name] = v
-
-                insert_param.extend([model] * (num_sample - current_count))
-
+    if save_db:
         db_utils.insert(conn, "RESULT", insert_param)
+
+    return plan
 
 
 def test(
@@ -115,12 +133,54 @@ def test(
     print("result: " + str(result))
 
 
+def plan(
+        filter_function=None,
+        num_sample=1,
+        parameters: list = None,
+        force_values: dict = None,
+):
+    if parameters is None:
+        parameters = []
+    if force_values is None:
+        force_values = {}
+
+    if not os.path.isdir(".tune"):
+        os.makedirs(".tune")
+    conn = sqlite3.connect(os.path.join(".tune", "tune.db"))
+    plan = _prepare_db(conn, num_sample, parameters, filter_function, False)
+    if len(plan) == 0:
+        print("No task will be executed!")
+        return
+    samples = 0
+    param_ranges = {}
+    for p, n in plan:
+        p.update(force_values)
+        for k, v in p.items():
+            param_set = param_ranges.get(k, set())
+            param_set.add(v)
+            param_ranges[k] = param_set
+    ignore_params = []
+    for k, v in param_ranges.items():
+        if len(v) == 1:
+            print("common parameter: %s, %s" % (k, v))
+            ignore_params.append(k)
+    for p, n in plan:
+        for ignore_p in ignore_params:
+            del p[ignore_p]
+        samples += n
+        print("(%d) %s" % (n, p))
+    print()
+    print("%d task%s / %d sample%s will be executed." % (len(plan), '' if len(plan) <= 1 else 's',
+                                                          samples, '' if samples <= 1 else 's'))
+
+
 def run(
         obj_function,
         filter_function=None,
         num_sample=1,
         parameters: list = None,
-        force_values: dict = None
+        force_values: dict = None,
+        on_finish_function=None
 ):
     if parameters is None:
         parameters = []
@@ -131,6 +191,7 @@ def run(
         os.makedirs(".tune")
     conn = sqlite3.connect(os.path.join(".tune", "tune.db"))
     _prepare_db(conn, num_sample, parameters, filter_function)
+    run_count = 0
 
     while True:
         with conn:
@@ -164,6 +225,7 @@ def run(
         results = None
         try:
             results = obj_function(config)
+            run_count += 1
         finally:
             if results is None:
                 print("No result returned!! Set %s.STATUS = PENDING" % str(db_id))
@@ -187,6 +249,14 @@ def run(
                                 "ID": db_id
                             })
 
+    # check if finish
+    if on_finish_function is not None:
+        with conn:
+            total_count = db_utils.count(conn, "RESULT")
+            terminated_count = db_utils.count(conn, "RESULT", where={"STATUS": "TERMINATED"})
+            if total_count == terminated_count:
+                on_finish_function(run_count)
+
     conn.close()
 
 
@@ -194,23 +264,31 @@ def test_or_run(
         obj_function,
         filter_function=None,
         num_sample=1,
-        parameters: list = None
+        parameters: list = None,
+        on_finish_function=None,
 ):
     parser = argparse.ArgumentParser()
     parser.add_argument("--test", action="store_true")
+    parser.add_argument("--plan", action="store_true")
     for x in parameters:
         parser.add_argument("--" + x.name, type=x.base_type.python_type, default=None)
     args = parser.parse_args()
 
     force_values = {}
+    keywords = ['test', 'plan', 'run']
     for arg in vars(args):
         value = getattr(args, arg)
-        if value is not None:
+        if value is not None and arg not in keywords:
             force_values[arg] = value
     if args.test:
         print("Test!")
         test(obj_function, parameters=parameters, force_values=force_values)
+    elif args.plan:
+        print("Plan!")
+        plan(filter_function=filter_function, num_sample=num_sample,
+             parameters=parameters, force_values=force_values)
     else:
         print("Run!")
-        run(obj_function, filter_function=filter_function, num_sample=num_sample, parameters=parameters,
-            force_values=force_values)
+        run(obj_function, filter_function=filter_function, num_sample=num_sample,
+            parameters=parameters,
+            force_values=force_values, on_finish_function=on_finish_function)

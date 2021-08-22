@@ -53,7 +53,7 @@ def ensure_column(conn: sqlite3.Connection, table_name: str,
     for name, db_type, default in name_type_default:
         if name not in columns:
             if default is not None:
-                statement = ("ALTER TABLE %s ADD COLUMN %s %s DEFAULT %s" % (
+                statement = ("ALTER TABLE %s ADD COLUMN %s %s DEFAULT `%s`" % (
                     table_name, name, db_type, default
                 ))
             else:
