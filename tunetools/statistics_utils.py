@@ -9,13 +9,18 @@ def singleton_dict_to_tuple(singleton_dict):
     return list(singleton_dict.items())[0]
 
 
-def check_param(param, total_param):
+def check_param(param, total_param, mark_param: set):
     if param is None:
         return []
+    new_param = []
     for x in param:
+        if x.startswith(":"):
+            x = x[1:]
+            mark_param.add(x)
         if x not in total_param:
             raise ValueError("Unknown param: " + x + str(total_param))
-    return param
+        new_param.append(x)
+    return new_param
 
 
 def parse_pandas(conn, yaml_path):
@@ -32,8 +37,9 @@ def parse_pandas(conn, yaml_path):
         else:
             target_result[x] = ""
 
-    group_by_params = check_param(yml_dict.get("group_by", []), total_params)
-    find_best_params = check_param(yml_dict.get("find_best", []), total_params)
+    mark_params = set()
+    group_by_params = check_param(yml_dict.get("group_by", []), total_params, mark_params)
+    find_best_params = check_param(yml_dict.get("find_best", []), total_params, mark_params)
     if not has_direction and len(find_best_params) != 0:
         raise ValueError("Unknown direction for find best params: " + str(find_best_params))
     if len(find_best_params) == 0:
@@ -65,7 +71,8 @@ def parse_pandas(conn, yaml_path):
     def apply_find_best(df: pd.DataFrame):
         # input: (**group_by**, find_best, num_sample) -> result
         # output: (**group_by**) -> best ArrayWrapper
-        agg = df.groupby(by=["param_" + x for x in find_best_params], as_index=False).apply(apply_aggregate_sample)
+        agg = df.groupby(by=["param_" + x for x in find_best_params], as_index=False).apply(
+            apply_aggregate_sample)
         # agg: (**group_by**, **find_best**) -> ArrayWrapper
         best_row = None
         for _, row in agg.iterrows():
@@ -89,56 +96,72 @@ def parse_pandas(conn, yaml_path):
     def apply_aggregate_sample(df: pd.DataFrame):
         # input: (**group_by**, **find_best**, num_sample) -> result
         # output: (**group_by**, **find_best**) -> ArrayWrapper
-        current_group = dict(('param_' + g, df['param_' + g].iloc[0]) for g in (group_by_params + find_best_params))
+        current_group = dict(
+            ('param_' + g, df['param_' + g].iloc[0]) for g in (group_by_params + find_best_params))
 
         for p in left_params:
             flatten_set = set(df['param_' + p])
             if len(flatten_set) != 1:
-                raise ValueError("Identifiability check failed: there exist distinct values " + str(flatten_set) +
+                raise ValueError("Identifiability check failed: there exist distinct values " + str(
+                    flatten_set) +
                                  " on parameter '" + p + "' in group: " + str(current_group) +
                                  ", which may make the aggregated target inaccurate. " +
                                  "Please check it. You can add '" + p +
-                                 "' into 'find_best' or 'group_by' configurations, or filter this case in 'where' "
-                                 "configurations.")
+                                 "' into 'find_best' or 'group_by' configurations, or filter "
+                                 "this case in 'where' configurations.")
 
-        current_group.update(dict(('ret_' + g, ArrayWrapper(list(df['ret_' + g]))) for g in (target_result)))
+        current_group.update(
+            dict(('ret_' + g, ArrayWrapper(list(df['ret_' + g]))) for g in target_result))
         x = pd.Series(current_group)
         return x
 
-    raw_group = data.groupby(by=["param_" + x for x in group_by_params], as_index=False).apply(apply_find_best)
-    raw_group.index = range(len(raw_group))
-    group = raw_group.copy()
-    param_columns = list(map(lambda x: x.replace("param_", ""), filter(lambda x: x.startswith("param_"), group.columns)))
-    group.columns = map(lambda x: x.replace("param_", "").replace("ret_", ""), group.columns)
-    group = group.groupby(by=param_columns).agg('first')
+    data = data.groupby(by=["param_" + x for x in group_by_params], as_index=False).apply(
+        apply_find_best)
+    data.index = range(len(data))
 
     # t-test
-    if 't_test' in yml_dict:
-        t_test = dict([singleton_dict_to_tuple(x) for x in yml_dict['t_test']])
-        baseline_cond = [singleton_dict_to_tuple(x) for x in t_test['baseline']]
-        baseline = []
-        for _, row in group.iterrows():
-            hit = True
-            for k, v in baseline_cond:
-                if row['param_' + k] != v:
-                    hit = False
-                    break
-            if hit:
-                baseline.append(row.copy())
-        if len(baseline) != 1:
-            raise ValueError(str(len(baseline)) + " baseline(s) found!")
-        baseline = baseline[0]
-        for _, row in group.iterrows():
-            for target in target_result.keys():
-                name = 'ret_' + target
-                if row[name].is_numeric():
-                    row[name].t_test(baseline[name], t_test['equal_var'])
-    print(group.to_string())
+    t_test_param = yml_dict.get("t_test", None)
+    if t_test_param is not None:
+        t_test(data, dict([singleton_dict_to_tuple(x) for x in t_test_param]), target_result)
+
+    print_group(data, mark_params)
 
     draw_params = yml_dict.get("draw", None)
     if draw_params is not None:
         draw_params = dict(singleton_dict_to_tuple(x) for x in draw_params)
-        draw(raw_group, draw_params)
+        draw(data, draw_params)
+
+
+def print_group(data: pd.DataFrame, mark_params):
+    group = data.copy()
+    mark_params = ["param_" + x for x in mark_params]
+    group.drop(labels=mark_params, axis=1, inplace=True)
+    param_columns = list(map(lambda x: x.replace("param_", ""),
+                             filter(lambda x: x.startswith("param_"), group.columns)))
+    group.columns = map(lambda x: x.replace("param_", "").replace("ret_", ""), group.columns)
+    group = group.groupby(by=param_columns).agg('first')
+    print(group.to_string())
+
+
+def t_test(data: pd.DataFrame, t_test_param, target_result):
+    baseline_cond = [singleton_dict_to_tuple(x) for x in t_test_param['baseline']]
+    baseline = []
+    for _, row in data.iterrows():
+        hit = True
+        for k, v in baseline_cond:
+            if row['param_' + k] != v:
+                hit = False
+                break
+        if hit:
+            baseline.append(row.copy())
+    if len(baseline) != 1:
+        raise ValueError(str(len(baseline)) + " baseline(s) found!")
+    baseline = baseline[0]
+    for _, row in data.iterrows():
+        for target in target_result.keys():
+            name = 'ret_' + target
+            if row[name].is_numeric():
+                row[name].t_test(baseline[name], t_test_param['equal_var'])
 
 
 def draw(data: pd.DataFrame, draw_params):
@@ -149,10 +172,12 @@ def draw(data: pd.DataFrame, draw_params):
 
     x_name = "param_" + get_axis_index("x")
     y_name = "ret_" + get_axis_index("y")
-    legend_names = list(set(filter(lambda x: x.startswith("param_"), data.columns)) - {x_name, y_name})
+    legend_names = "param_" + get_axis_index("legend")
     legend_to_xy = {}  # legend -> [x], [y]
     for _, record in data.iterrows():
-        legend = ", ".join([name.replace("param_", "") + ":" + str(record[name]) for name in legend_names])
+        legend = str(record[legend_names])
+        # legend = ", ".join(
+        #     [name.replace("param_", "") + ":" + str(record[name]) for name in legend_names])
         if legend not in legend_to_xy:
             legend_to_xy[legend] = ([], [], [], [])
         legend_to_xy[legend][0].append(record[x_name])
@@ -180,12 +205,13 @@ def draw(data: pd.DataFrame, draw_params):
     legend.get_frame().set_facecolor('none')
     plt.show()
 
+
 class ArrayWrapper:
     def __init__(self, content):
         try:
             self._array = list(map(float, content))
             self._is_numeric = True
-        except ValueError:
+        except Exception:
             self._array = content
             self._is_numeric = False
         self._mean = None
@@ -198,6 +224,8 @@ class ArrayWrapper:
             if self._p_value is not None:
                 content += " (%.4lf)" % (self._p_value)
             return content
+        if len(set(self._array)) == 1:
+            return str(self._array[0])
         return str(self._array)
 
     def mean(self):
@@ -230,5 +258,6 @@ class ArrayWrapper:
 
 if __name__ == "__main__":
     import sys, sqlite3
+
     conn = sqlite3.connect("G:\\Rank\\temp\\temp\\ULTRA2\\.tune\\tune.db")
     parse_pandas(conn, "G:\\Rank\\temp\\temp\\ULTRA2\\config.yml")
