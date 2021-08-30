@@ -88,7 +88,7 @@ def _prepare_db(
     for param_tuple in itertools.product(*param_space_sampled):
         if filter_function is not None:
             config = _construct_config(parameters, param_tuple, {})
-            if not filter_function(config):
+            if not filter_function(**config):
                 continue
         where = _construct_where(parameters, param_tuple)
         current_count = db_utils.count(conn, "RESULT",
@@ -128,7 +128,7 @@ def test(
         force_values = {}
     config = _construct_config(parameters, [x.default for x in parameters], force_values)
     _print_config(config)
-    result = obj_function(config)
+    result = obj_function(**config)
     print("=" * 20)
     print("result: " + str(result))
 
@@ -224,7 +224,7 @@ def run(
 
         results = None
         try:
-            results = obj_function(config)
+            results = obj_function(**config)
             run_count += 1
         finally:
             if results is None:
@@ -243,6 +243,8 @@ def run(
             }
             for k, v in results.items():
                 replace_dict['ret_' + k] = v
+            for k, v in force_values.items():
+                replace_dict['param_' + k] = v
             db_utils.update(conn, "RESULT",
                             put=replace_dict,
                             where={

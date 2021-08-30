@@ -40,6 +40,7 @@ def parse_pandas(conn, yaml_path):
     mark_params = set()
     group_by_params = check_param(yml_dict.get("group_by", []), total_params, mark_params)
     find_best_params = check_param(yml_dict.get("find_best", []), total_params, mark_params)
+    ignore_params = check_param(yml_dict.get("ignore", []), total_params, set())
     if not has_direction and len(find_best_params) != 0:
         raise ValueError("Unknown direction for find best params: " + str(find_best_params))
     if len(find_best_params) == 0:
@@ -100,6 +101,8 @@ def parse_pandas(conn, yaml_path):
             ('param_' + g, df['param_' + g].iloc[0]) for g in (group_by_params + find_best_params))
 
         for p in left_params:
+            if p in ignore_params:
+                continue
             flatten_set = set(df['param_' + p])
             if len(flatten_set) != 1:
                 raise ValueError("Identifiability check failed: there exist distinct values " + str(

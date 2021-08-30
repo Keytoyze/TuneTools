@@ -17,7 +17,7 @@ setup(
     install_requires=[
         'numpy',
         'pandas',
-        'scipy',
+        'scipy>=1.6.0',
         'PyYaml'
     ]
 )

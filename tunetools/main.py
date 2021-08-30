@@ -6,7 +6,7 @@ import time
 import shutil
 
 from tunetools import db_utils
-from tunetools import statistics_utils
+from tunetools import decorator
 
 
 def _get_db_conn(args):
@@ -26,16 +26,34 @@ def status(args):
                                                                 'WHERE STATUS = "TERMINATED" '
                                                                 'ORDER BY RUN_AT DESC '
                                                                 'LIMIT 20)')[0]
-        count_running = db_utils.count(conn, "RESULT", where={"STATUS": "RUNNING"})
+        if aver_duration == 0:
+            aver_duration = 60
+        running_task = db_utils.select(conn, "RESULT", project=['HOST', 'PID', 'RUN_AT'],
+                                       where={"STATUS": "RUNNING"})
+        running_task = list(running_task)
         count_pending = db_utils.count(conn, "RESULT", where={"STATUS": "PENDING"})
+        count_running = len(running_task)
     print("Running: %d, Pending: %d" % (count_running, count_pending))
     if count_running != 0:
         print("Speed: %lf/h" % (60 / aver_duration * count_running))
         total_left_min = int(
             (count_pending + count_running / 2) * aver_duration / count_running)
 
-        print("Left Time: %dh%dmin (%s)" % (total_left_min / 60, total_left_min % 60,
-                                            time.ctime(time.time() + total_left_min * 60)))
+        def format_time(left_min):
+            if left_min < 60:
+                return "%dm" % (left_min % 60)
+            return "%dh%dm" % (left_min / 60, left_min % 60)
+
+        print("Left Time: %s (%s)" % (format_time(total_left_min),
+                                      time.ctime(time.time() + total_left_min * 60)))
+        print("========================")
+        current = time.time()
+        for host, pid, run_at in running_task:
+            this_duration = (current - run_at) / 60
+            print("[%s-%s] %.2lf%%, duration = %s, left = %s" % (
+                host, pid, this_duration / aver_duration * 100,
+                format_time(this_duration), format_time(aver_duration - this_duration)
+            ))
 
     conn.close()
 
@@ -52,7 +70,7 @@ def terminate(args):
                     print("Terminate: id = %d, host = %s, pid = %d" % (id, host, pid))
                 except ProcessLookupError:
                     print("Terminate: Not such process, id = %d, host = %s, pid = %d" % (
-                    id, host, pid))
+                        id, host, pid))
                 db_utils.update(conn, "RESULT", put={"STATUS": "PENDING"}, where={"ID": id})
             else:
                 print("Ignore: id = %d, host = %s, pid = %d" % (id, host, pid))
@@ -68,6 +86,7 @@ def clean(args):
 
 
 def statistics(args):
+    from tunetools import statistics_utils
     conn = _get_db_conn(args)
     with conn:
         statistics_utils.parse_pandas(conn, args.config)
@@ -102,6 +121,7 @@ def get_tune_dir_and_backup_dir(args):
         exit(-1)
     return path, os.path.join(path, args.name)
 
+
 def copy_file_in_dir(src, dst):
     for n in os.listdir(src):
         source = os.path.join(src, n)
@@ -110,10 +130,12 @@ def copy_file_in_dir(src, dst):
             shutil.copyfile(source, target)
             print("copy: %s -> %s" % (source, target))
 
+
 def store(args):
     tune_dir, backup_dir = get_tune_dir_and_backup_dir(args)
     if os.path.isdir(backup_dir):
-        response = input("Warning: backup name '%s' exists! Do you want to overwrite it? [y|n]" % args.name)
+        response = input(
+            "Warning: backup name '%s' exists! Do you want to overwrite it? [y|n]" % args.name)
         if response == 'y':
             shutil.rmtree(backup_dir)
         else:
@@ -121,6 +143,7 @@ def store(args):
     os.mkdir(backup_dir)
     copy_file_in_dir(tune_dir, backup_dir)
     print("store success!")
+
 
 def restore(args):
     tune_dir, backup_dir = get_tune_dir_and_backup_dir(args)
@@ -135,29 +158,55 @@ def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
 
-    func_parser = subparsers.add_parser('terminate')
-    func_parser.set_defaults(func=terminate)
+    run_parser = subparsers.add_parser('run',
+                                       help='run tasks and record results for each parameter combination')
+    run_parser.set_defaults(func=decorator._run)
 
-    func_parser = subparsers.add_parser('status')
-    func_parser.set_defaults(func=status)
+    test_parser = subparsers.add_parser('test',
+                                        help='run the task by default values for once, but not record')
+    test_parser.set_defaults(func=decorator._test)
 
-    func_parser = subparsers.add_parser('store')
-    func_parser.set_defaults(func=store)
-    func_parser.add_argument('name', type=str, default=None)
+    plan_parser = subparsers.add_parser('plan',
+                                        help='list all the parameter combinations that will be executed')
+    plan_parser.set_defaults(func=decorator._plan)
 
-    func_parser = subparsers.add_parser('restore')
-    func_parser.set_defaults(func=restore)
-    func_parser.add_argument('name', type=str, default=None)
+    for subparser in [run_parser, test_parser, plan_parser]:
+        subparser.add_argument('python_file', type=str, default=None, metavar='<py_file>',
+                               help='a python file recording the experiment tuning configuarions')
+        subparser.add_argument('--inject', nargs='*', type=str, default=[], metavar='param:value',
+                               help='k-v pairs that injected into parameters')
 
-    func_parser = subparsers.add_parser('clean')
-    func_parser.set_defaults(func=clean)
+    terminate_parser = subparsers.add_parser('terminate',
+                                             help='terminate all the running processes')
+    terminate_parser.set_defaults(func=terminate)
 
-    func_parser = subparsers.add_parser('db')
-    func_parser.set_defaults(func=db)
+    status_parser = subparsers.add_parser('status',
+                                          help='show the running status')
+    status_parser.set_defaults(func=status)
 
-    func_parser = subparsers.add_parser('statistics')
-    func_parser.set_defaults(func=statistics)
-    func_parser.add_argument("config", type=str, default=None, help="path to the config yml file")
+    store_parser = subparsers.add_parser('store',
+                                         help='backup records')
+    store_parser.set_defaults(func=store)
+    store_parser.add_argument('name', type=str, default=None, metavar='<name>')
+
+    restore_parser = subparsers.add_parser('restore',
+                                           help='restore backups')
+    restore_parser.set_defaults(func=restore)
+    restore_parser.add_argument('name', type=str, default=None, metavar='<name>')
+
+    clean_parser = subparsers.add_parser('clean',
+                                         help='remove all non-terminated tasks')
+    clean_parser.set_defaults(func=clean)
+
+    db_parser = subparsers.add_parser('db',
+                                      help='execute sql on the record database')
+    db_parser.set_defaults(func=db)
+
+    statistics_parser = subparsers.add_parser('statistics',
+                                              help='do statistics')
+    statistics_parser.set_defaults(func=statistics)
+    statistics_parser.add_argument("config", type=str, default=None, metavar='<config_file>',
+                                   help="path to the config yml file")
 
     args = parser.parse_args()
     args.func(args)

@@ -9,6 +9,13 @@ class BaseSearchSpace:
         self.base_type = base_type
         self.default = default
 
+    def check_type(self, value_to_check):
+        try:
+            self.base_type.python_type(value_to_check)
+            return True
+        except (ValueError, TypeError):
+            return False
+
     def sample(self) -> list:
         pass
 
@@ -20,11 +27,14 @@ class GridSearchSpace(BaseSearchSpace):
         super().__init__(name, base_type, default)
         self.domain = domain
         for x in domain:
-            try:
-                base_type.python_type(x)
-            except ValueError:
+            if not self.check_type(x):
                 raise ValueError("type doesn't match: cannot convert " + str(x) + 
                                  " to " + str(base_type.python_type))
 
     def sample(self) -> list:
         return self.domain
+
+
+class Parameter:
+    def __init__(self, default, domain: list):
+        self.default, self.domain = default, domain
