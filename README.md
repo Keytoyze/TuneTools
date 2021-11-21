@@ -16,7 +16,11 @@ pip install tunetools
 # train.py
 from tunetools import decorator, Parameter
 
-@decorator.main(num_sample=3) # each experiment will rerun for 5 times.
+# This is the main function, which will be executed during training. 
+# Tunetools will recognize the parameters automatically, and construct 
+# grid search with the given domains. 
+# "num_sample=2" means each experiment will run for 2 times.
+@decorator.main(num_sample=2) 
 def main(
         # Register the hyper-parameters manifest here. 
         alpha: Parameter(default=0.5, domain=[0, 0.3, 0.5]),
@@ -99,11 +103,12 @@ common parameter: gpu, {0}
 162 tasks / 324 samples will be executed.
 324 samples will be inserted.
 
-$ tunetools plan train.py --inject beta:0 lr:0.1
+# Run with injections.
+$ tunetools run train.py --inject beta:0 lr:0.1
 ```
 
 
-You can run "tunetools run" in different terminals, to do a parallel training. TuneTools will ensure the synchronization between processes.
+You can run `tunetools run` in different terminals, to do a parallel training. TuneTools will ensure the synchronization between processes.
 During training, you can monitor the training progress or terminate it.
 
 ```bash
