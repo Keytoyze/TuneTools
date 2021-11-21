@@ -4,6 +4,7 @@ import socket
 import sqlite3
 import time
 import shutil
+import json
 
 from tunetools import db_utils
 from tunetools import decorator
@@ -25,10 +26,11 @@ def status(args):
                                                                 '(SELECT DURATION_MIN FROM RESULT '
                                                                 'WHERE STATUS = "TERMINATED" '
                                                                 'ORDER BY RUN_AT DESC '
-                                                                'LIMIT 20)')[0]
-        if aver_duration == 0:
+                                                                'LIMIT %d)' % args.limit)[0]
+        if aver_duration is None:
             aver_duration = 60
-        running_task = db_utils.select(conn, "RESULT", project=['HOST', 'PID', 'RUN_AT'],
+            print("WARNING: I don't know the average duration. Use 60min for now.")
+        running_task = db_utils.select(conn, "RESULT", project=['ID', 'HOST', 'PID', 'RUN_AT'],
                                        where={"STATUS": "RUNNING"})
         running_task = list(running_task)
         count_pending = db_utils.count(conn, "RESULT", where={"STATUS": "PENDING"})
@@ -36,27 +38,47 @@ def status(args):
     print("Running: %d, Pending: %d" % (count_running, count_pending))
     if count_running != 0:
         print("Speed: %lf/h" % (60 / aver_duration * count_running))
-        total_left_min = int(
-            (count_pending + count_running / 2) * aver_duration / count_running)
+        total_left_sec = (count_pending + count_running / 2) * aver_duration / count_running * 60
 
-        def format_time(left_min):
+        def format_time(left_sec):
+            left_min = int(left_sec / 60)
             if left_min < 60:
-                return "%dm" % (left_min % 60)
-            return "%dh%dm" % (left_min / 60, left_min % 60)
+                return "%02d:%02d" % (left_min, left_sec % 60)
+            return "%02d:%02d:%02d" % (left_min / 60, left_min % 60, left_sec % 60)
 
-        print("Left Time: %s (%s)" % (format_time(total_left_min),
-                                      time.ctime(time.time() + total_left_min * 60)))
+        print("Left Time: %s (%s)" % (format_time(total_left_sec),
+                                      time.ctime(time.time() + total_left_sec)))
         print("========================")
         current = time.time()
-        for host, pid, run_at in running_task:
-            this_duration = (current - run_at) / 60
-            print("[%s-%s] %.2lf%%, duration = %s, left = %s" % (
-                host, pid, this_duration / aver_duration * 100,
-                format_time(this_duration), format_time(aver_duration - this_duration)
+        for id, host, pid, run_at in running_task:
+            this_duration = current - run_at
+            print("[%s-%s] %.2lf%%, duration = %s, left = %s\t\t%s" % (
+                host, pid, this_duration / aver_duration / 60 * 100,
+                format_time(this_duration), format_time(aver_duration * 60 - this_duration),
+                _get_last_line(os.path.join('.tune', 'logs', str(id) + '.log')).strip()
             ))
 
     conn.close()
 
+def _get_last_line(name):
+    if not os.path.isfile(name):
+        return ''
+    with open(name, 'rb') as f:
+        file_size = os.path.getsize(name)
+        offset = -100
+        if file_size == 0:
+            return ''
+        while True:
+            if (abs(offset) >= file_size):
+                f.seek(-file_size, 2)
+                data = f.readlines()
+                return str(data[-1])
+            f.seek(offset, 2)
+            data = f.readlines()
+            if (len(data) > 1):
+                return str(data[-1])
+            else:
+                offset *= 2
 
 def terminate(args):
     conn = _get_db_conn(args)
@@ -86,10 +108,14 @@ def clean(args):
 
 
 def statistics(args):
-    from tunetools import statistics_utils
+    from tunetools import statistics
     conn = _get_db_conn(args)
     with conn:
-        statistics_utils.parse_pandas(conn, args.config)
+        statistics._parse(conn, args.config)
+
+def draw(args):
+    from tunetools import statistics
+    statistics.draw_with_json(json.load(open(args.config)))
 
 
 def db(args):
@@ -183,6 +209,7 @@ def main():
     status_parser = subparsers.add_parser('status',
                                           help='show the running status')
     status_parser.set_defaults(func=status)
+    status_parser.add_argument('--limit', type=int, default=20, metavar='<limit>')
 
     store_parser = subparsers.add_parser('store',
                                          help='backup records')
@@ -207,6 +234,12 @@ def main():
     statistics_parser.set_defaults(func=statistics)
     statistics_parser.add_argument("config", type=str, default=None, metavar='<config_file>',
                                    help="path to the config yml file")
+
+    statistics_parser = subparsers.add_parser('draw',
+                                              help='draw with the json from statistics')
+    statistics_parser.set_defaults(func=draw)
+    statistics_parser.add_argument("config", type=str, default=None, metavar='<json_file>',
+                                   help="path to the json file")
 
     args = parser.parse_args()
     args.func(args)

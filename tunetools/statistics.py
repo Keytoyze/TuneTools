@@ -3,13 +3,15 @@ from tunetools import db_utils
 import numpy as np
 import pandas as pd
 from scipy import stats
+import json
 
 
-def singleton_dict_to_tuple(singleton_dict):
+
+def _singleton_dict_to_tuple(singleton_dict):
     return list(singleton_dict.items())[0]
 
 
-def check_param(param, total_param, mark_param: set):
+def _check_param(param, total_param, mark_param: set):
     if param is None:
         return []
     new_param = []
@@ -23,7 +25,7 @@ def check_param(param, total_param, mark_param: set):
     return new_param
 
 
-def parse_pandas(conn, yaml_path):
+def _parse(conn, yaml_path):
     yml_dict = yaml.load(open(yaml_path), Loader=yaml.FullLoader)
 
     total_params = [x[6:] for x in db_utils.get_columns(conn, "RESULT") if x.startswith("param_")]
@@ -31,16 +33,16 @@ def parse_pandas(conn, yaml_path):
     has_direction = False
     for x in yml_dict.get("target", []):
         if type(x) == dict:
-            cur_tuple = singleton_dict_to_tuple(x)
+            cur_tuple = _singleton_dict_to_tuple(x)
             target_result[cur_tuple[1]] = cur_tuple[0]
             has_direction = True
         else:
             target_result[x] = ""
 
     mark_params = set()
-    group_by_params = check_param(yml_dict.get("group_by", []), total_params, mark_params)
-    find_best_params = check_param(yml_dict.get("find_best", []), total_params, mark_params)
-    ignore_params = check_param(yml_dict.get("ignore", []), total_params, set())
+    group_by_params = _check_param(yml_dict.get("group_by", []), total_params, mark_params)
+    find_best_params = _check_param(yml_dict.get("find_best", []), total_params, mark_params)
+    ignore_params = _check_param(yml_dict.get("ignore", []), total_params, set())
     if not has_direction and len(find_best_params) != 0:
         raise ValueError("Unknown direction for find best params: " + str(find_best_params))
     if len(find_best_params) == 0:
@@ -53,7 +55,7 @@ def parse_pandas(conn, yaml_path):
     where_clause_params = []
     for where_condition in where_list:
         if type(where_condition) == dict:
-            item = singleton_dict_to_tuple(where_condition)
+            item = _singleton_dict_to_tuple(where_condition)
             where_clauses.append(str(item[0]) + "=?")
             where_clause_params.append(item[1])
         elif type(where_condition) == str:
@@ -125,13 +127,13 @@ def parse_pandas(conn, yaml_path):
     # t-test
     t_test_param = yml_dict.get("t_test", None)
     if t_test_param is not None:
-        t_test(data, dict([singleton_dict_to_tuple(x) for x in t_test_param]), target_result)
+        t_test(data, dict([_singleton_dict_to_tuple(x) for x in t_test_param]), target_result)
 
     print_group(data, mark_params)
 
     draw_params = yml_dict.get("draw", None)
     if draw_params is not None:
-        draw_params = dict(singleton_dict_to_tuple(x) for x in draw_params)
+        draw_params = dict(_singleton_dict_to_tuple(x) for x in draw_params)
         draw(data, draw_params)
 
 
@@ -147,7 +149,7 @@ def print_group(data: pd.DataFrame, mark_params):
 
 
 def t_test(data: pd.DataFrame, t_test_param, target_result):
-    baseline_cond = [singleton_dict_to_tuple(x) for x in t_test_param['baseline']]
+    baseline_cond = [_singleton_dict_to_tuple(x) for x in t_test_param['baseline']]
     baseline = []
     for _, row in data.iterrows():
         hit = True
@@ -175,37 +177,73 @@ def draw(data: pd.DataFrame, draw_params):
 
     x_name = "param_" + get_axis_index("x")
     y_name = "ret_" + get_axis_index("y")
-    legend_names = "param_" + get_axis_index("legend")
+    legend_template = get_axis_index("legend")
     legend_to_xy = {}  # legend -> [x], [y]
     for _, record in data.iterrows():
-        legend = str(record[legend_names])
-        # legend = ", ".join(
-        #     [name.replace("param_", "") + ":" + str(record[name]) for name in legend_names])
+        # legend = str(record[legend_names])
+        legend = legend_template
+        for name in record.index:
+            legend = legend.replace("${%s}" % name, str(record[name]))
         if legend not in legend_to_xy:
-            legend_to_xy[legend] = ([], [], [], [])
-        legend_to_xy[legend][0].append(record[x_name])
-        legend_to_xy[legend][1].append(record[y_name].mean())
-        legend_to_xy[legend][2].append(record[y_name].mean() + record[y_name].std())
-        legend_to_xy[legend][3].append(record[y_name].mean() - record[y_name].std())
-    print(legend_to_xy)
+            legend_to_xy[legend] = {'x': [], 'y': [], 'y_sup': [], 'y_inf': [], 'marker': '', 'line_style': '', 'color': ''}
+        legend_to_xy[legend]['x'].append(record[x_name])
+        legend_to_xy[legend]['y'].append(record[y_name].mean())
+        legend_to_xy[legend]['y_sup'].append(record[y_name].mean() + record[y_name].std())
+        legend_to_xy[legend]['y_inf'].append(record[y_name].mean() - record[y_name].std())
+
+    content_json = {
+        'pre_command': [
+            'plt.xlabel("%s")' % draw_params['x'],
+            'plt.ylabel("%s")' % draw_params['y']
+        ],
+        'post_command': [
+            'plt.legend().get_frame().set_facecolor("none")'
+        ],
+        'plot': legend_to_xy,
+    }
+    draw_with_json(content_json, True)
+
+
+def draw_with_json(content, from_statistics=False):
     from matplotlib import pyplot as plt
 
-    plt.xlabel(draw_params['x'])
-    plt.ylabel(draw_params['y'])
+    if 'pre_command' in content:
+        for command in content['pre_command']:
+            eval(command)
+
+    legend_to_xy = content['plot']
     patterns = ["\\", ".", "o", "/", "+", "-", "*", "x", "O", "|"]
     marker = ['.', '+', '*', 'v', 'D', 'o', 'v', '1', '2', '3', '4']
     line_style = ['-', ':', '-.', '--', '-', ':', '-.', '--', '-', ':', '-.', '--']
     for i, label in enumerate(legend_to_xy):
-        plt.plot(legend_to_xy[label][0], legend_to_xy[label][1], label=label, marker=marker[i],
-                 linestyle=line_style[i])
-        if 'deviation' not in draw_params or draw_params['deviation'] == True:
-            plt.fill_between(legend_to_xy[label][0],
-                             legend_to_xy[label][2],
-                             legend_to_xy[label][3],
+        cur_marker = legend_to_xy[label].get('marker', '')
+        cur_line_style = legend_to_xy[label].get('line_style', '')
+        cur_color = legend_to_xy[label].get('color', '')
+        plt.plot(legend_to_xy[label]['x'], legend_to_xy[label]['y'], label=label,
+                 marker=cur_marker if cur_marker != '' else marker[i],
+                 linestyle=cur_line_style if cur_line_style != '' else line_style[i],
+                 color=cur_color if cur_color != '' else None)
+        if 'y_sup' in legend_to_xy[label] and 'y_inf' in legend_to_xy[label]:
+            plt.fill_between(legend_to_xy[label]['x'],
+                             legend_to_xy[label]['y_sup'],
+                             legend_to_xy[label]['y_inf'],
                              alpha=0.2)
 
     legend = plt.legend()
     legend.get_frame().set_facecolor('none')
+
+    if 'post_command' in content:
+        for command in content['post_command']:
+            eval(command)
+
+    if from_statistics:
+        print("draw params: ")
+        viewLim = plt.gca().viewLim
+        content['post_command'].append("plt.axis([%lf, %lf, %lf, %lf])" % (viewLim.xmin, viewLim.xmax, viewLim.ymin, viewLim.ymax))
+        print(json.dumps(content))
+        print("You can save the above draw params into a json file, then use the command 'tunetools draw <path>' to reproduce the picture.")
+
+
     plt.show()
 
 
@@ -263,4 +301,4 @@ if __name__ == "__main__":
     import sys, sqlite3
 
     conn = sqlite3.connect("G:\\Rank\\temp\\temp\\ULTRA2\\.tune\\tune.db")
-    parse_pandas(conn, "G:\\Rank\\temp\\temp\\ULTRA2\\config.yml")
+    _parse(conn, "G:\\Rank\\temp\\temp\\ULTRA2\\config.yml")

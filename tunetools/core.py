@@ -10,6 +10,7 @@ from typing import Iterable
 from . import db_utils
 from . import config
 from .search_space import *
+from . import session_logger
 
 
 def _construct_config(
@@ -26,7 +27,11 @@ def _construct_where(
         parameters: Iterable,
         values: Iterable
 ):
-    return dict(zip([x.db_name for x in parameters], values))
+    result = {}
+    for p, v in zip(parameters, values):
+        if not p.ignore:
+            result[p.db_name] = v
+    return result
 
 
 def _print_config(
@@ -83,7 +88,7 @@ def _prepare_db(
 
     param_space_sampled = [x.sample() for x in parameters]
     insert_param = []
-    plan = []  # (parameters, number)
+    plan = []  # (parameters, number_to_execute, number_to_insert)
 
     for param_tuple in itertools.product(*param_space_sampled):
         if filter_function is not None:
@@ -107,7 +112,7 @@ def _prepare_db(
                 model[p.name] = v
                 model_db[p.db_name] = v
 
-            plan.append((model, num_sample - current_done_count))
+            plan.append((model, num_sample - current_done_count, num_sample - current_count))
             if current_count < num_sample:
                 insert_param.extend([model_db] * (num_sample - current_count))
 
@@ -152,8 +157,9 @@ def plan(
         print("No task will be executed!")
         return
     samples = 0
+    samples_to_insert = 0
     param_ranges = {}
-    for p, n in plan:
+    for p, n, _ in plan:
         p.update(force_values)
         for k, v in p.items():
             param_set = param_ranges.get(k, set())
@@ -164,14 +170,16 @@ def plan(
         if len(v) == 1:
             print("common parameter: %s, %s" % (k, v))
             ignore_params.append(k)
-    for p, n in plan:
+    for p, n, n_insert in plan:
         for ignore_p in ignore_params:
             del p[ignore_p]
         samples += n
-        print("(%d) %s" % (n, p))
+        samples_to_insert += n_insert
+        print("(%d/%d) %s" % (n, n_insert, p))
     print()
     print("%d task%s / %d sample%s will be executed." % (len(plan), '' if len(plan) <= 1 else 's',
                                                           samples, '' if samples <= 1 else 's'))
+    print("%d sample%s will be inserted." % (samples_to_insert, '' if samples_to_insert <= 1 else 's'))
 
 
 def run(
@@ -219,6 +227,7 @@ def run(
             break
 
         config = _construct_config(parameters, values, force_values)
+        session_logger._start(db_id)
         start = time.time()
         _print_config(config)
 
@@ -226,11 +235,16 @@ def run(
         try:
             results = obj_function(**config)
             run_count += 1
+        except BaseException as e:
+            import traceback
+            traceback.print_exc()
+            raise e
         finally:
             if results is None:
                 print("No result returned!! Set %s.STATUS = PENDING" % str(db_id))
                 with conn:
                     db_utils.update(conn, "RESULT", put={"STATUS": "PENDING"}, where={"ID": db_id})
+            session_logger._end(results is not None)
 
         duration = (time.time() - start) / 60
         with conn:

@@ -3,11 +3,12 @@ from .search_types import *
 
 class BaseSearchSpace:
 
-    def __init__(self, name: str, base_type: BaseType, default):
+    def __init__(self, name: str, base_type: BaseType, default, ignore: bool=False):
         self.name = name
         self.db_name = "param_" + name
         self.base_type = base_type
         self.default = default
+        self.ignore = ignore
 
     def check_type(self, value_to_check):
         try:
@@ -22,9 +23,9 @@ class BaseSearchSpace:
 
 class GridSearchSpace(BaseSearchSpace):
 
-    def __init__(self, name: str, default, domain: list):
+    def __init__(self, name: str, default, domain: list, ignore: bool=False):
         base_type = TypeMap[type(default)]
-        super().__init__(name, base_type, default)
+        super().__init__(name, base_type, default, ignore)
         self.domain = domain
         for x in domain:
             if not self.check_type(x):

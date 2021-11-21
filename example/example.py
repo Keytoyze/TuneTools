@@ -1,6 +1,5 @@
 from tunetools import decorator, Parameter
 
-
 @decorator.main(num_sample=1)
 def main(
         alpha: Parameter(default=0.5, domain=[0, 0.3, 0.5]),
@@ -10,11 +9,13 @@ def main(
         model: Parameter(default="baseline", domain=["baseline", "model1", "model2"]),
         gpu: Parameter(default=0, domain=[0])
 ):
-    print(">>> start: ", alpha, beta, lr, dataset, model)
+    import sys
+    print(">>> start: ", alpha, beta, lr, dataset, model, file=sys.stderr)
+    print(">>> start: out ", alpha, beta, lr, dataset, model, file=sys.stdout)
     import random
     extra = 0
     import time
-    time.sleep(1)
+    time.sleep(10)
     print(gpu)
     if model == 'baseline':
         extra = -0.5
