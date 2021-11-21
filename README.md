@@ -248,11 +248,8 @@ $ tunetools statistics config.yml
 
 ## Installation
 
-> TODO: publish in pip
-
 ```bash
-python setup.py sdist
-pip install dist/tunetools-{version}.tar.gz
+pip install tunetools
 ```
 
 ## License
