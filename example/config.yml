@@ -1,0 +1,13 @@
+target:
+  - result
+group_by:
+  - alpha
+  - beta
+where:
+  - param_dataset: 'd1'
+  - param_lr: 0.01
+  - param_model: "baseline"
+draw:
+  - x: alpha
+  - y: result
+  - legend: beta=${param_beta}

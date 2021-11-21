@@ -53,7 +53,7 @@ def _check_parameter(signature, params, name):
     for func_param in signature.parameters:
         if func_param not in params:
             _on_error(
-                "Function parameter '%s' has not been registered in @parameters menifest." %
+                "Function parameter '%s' has not been registered in @parameters manifest." %
                 func_param)
     for deco_param in params:
         if deco_param not in signature.parameters:
@@ -80,11 +80,11 @@ def _prepare_env(args):
     inject_dict = dict([x.split(':') for x in inject_strings])
     for inject_param, inject_value in inject_dict.items():
         if inject_param not in params:
-            _on_error("Injected parameter '%s' has not been registered in @parameters menifest."
+            _on_error("Injected parameter '%s' has not been registered in @parameters manifest."
                       % inject_param)
         if not params[inject_param].check_type(inject_value):
             _on_error("Injected parameter '%s:%s' doesn't match the type defined in "
-                      "@parameters menifest." % (
+                      "@parameters manifest." % (
                           inject_param, inject_value
                       ))
 

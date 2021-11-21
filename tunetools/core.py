@@ -18,8 +18,11 @@ def _construct_config(
         values: Iterable,
         force_values: dict
 ):
-    result = dict(zip([x.name for x in parameters], values))
-    result.update(force_values)
+    result = dict(
+        map(lambda x: (x[0].name, x[0].base_type.python_type(x[1])), zip(parameters, values))
+    )
+    for force_name, force_value in force_values.items():
+        result[force_name] = type(result[force_name])(force_value)
     return result
 
 
@@ -35,12 +38,15 @@ def _construct_where(
 
 
 def _print_config(
-        config: dict
+        config: dict,
+        extra: str
 ):
-    print("=" * 20)
+    promt = "=" * int((20 - len(extra)) / 2)
+    promt = promt + extra + promt
+    print(promt)
     for x in config.items():
         print(str(x[0]) + ": " + str(x[1]))
-    print("=" * 20)
+    print("=" * len(promt))
 
 
 def _prepare_db(
@@ -132,9 +138,8 @@ def test(
     if force_values is None:
         force_values = {}
     config = _construct_config(parameters, [x.default for x in parameters], force_values)
-    _print_config(config)
+    _print_config(config, "TEST")
     result = obj_function(**config)
-    print("=" * 20)
     print("result: " + str(result))
 
 
@@ -229,7 +234,7 @@ def run(
         config = _construct_config(parameters, values, force_values)
         session_logger._start(db_id)
         start = time.time()
-        _print_config(config)
+        _print_config(config, "RUN #%d" % run_count)
 
         results = None
         try:
