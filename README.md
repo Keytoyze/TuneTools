@@ -2,6 +2,10 @@
 
 A powerful tuning and result management toolkit for AI experiments.
 
+```bash
+pip install tunetools
+```
+
 ## Examples
 
 ### Training and Tuning
@@ -245,12 +249,6 @@ $ tunetools statistics config.yml
 ```
 
 ![](figures/sample_figure.png)
-
-## Installation
-
-```bash
-pip install tunetools
-```
 
 ## License
 ```
