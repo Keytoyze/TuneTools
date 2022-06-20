@@ -111,7 +111,7 @@ def statistics(args):
     from tunetools import statistics
     conn = _get_db_conn(args)
     with conn:
-        statistics._parse(conn, args.config)
+        statistics._parse(conn, args.config, args.formatter, args.csv)
 
 def draw(args):
     from tunetools import statistics
@@ -187,6 +187,8 @@ def main():
     run_parser = subparsers.add_parser('run',
                                        help='run tasks and record results for each parameter combination')
     run_parser.set_defaults(func=decorator._run)
+    run_parser.add_argument('--worker', type=int, default=1, metavar='<worker>',
+                            help='number of workers to run in parallel')
 
     test_parser = subparsers.add_parser('test',
                                         help='run the task by default values for once, but not record')
@@ -234,6 +236,10 @@ def main():
     statistics_parser.set_defaults(func=statistics)
     statistics_parser.add_argument("config", type=str, default=None, metavar='<config_file>',
                                    help="path to the config yml file")
+    statistics_parser.add_argument("--formatter", type=str, default="[{count}] {mean:.4f}±{std:.4f}",
+                                   help="number formatter. Default: [{count}] {mean:.4f}±{std:.4f}")
+    statistics_parser.add_argument("--csv", action='store_true',
+                                   help="print as csv format")
 
     statistics_parser = subparsers.add_parser('draw',
                                               help='draw with the json from statistics')

@@ -193,15 +193,15 @@ def run(
         num_sample=1,
         parameters: list = None,
         force_values: dict = None,
-        on_finish_function=None
+        on_finish_function=None,
+        worker_id=0
 ):
     if parameters is None:
         parameters = []
     if force_values is None:
         force_values = {}
 
-    if not os.path.isdir(".tune"):
-        os.makedirs(".tune")
+    os.makedirs(".tune", exist_ok=True)
     conn = sqlite3.connect(os.path.join(".tune", "tune.db"))
     _prepare_db(conn, num_sample, parameters, filter_function)
     run_count = 0
@@ -234,7 +234,7 @@ def run(
         config = _construct_config(parameters, values, force_values)
         session_logger._start(db_id)
         start = time.time()
-        _print_config(config, "RUN #%d" % run_count)
+        _print_config(config, "RUN #%d IN #%d" % (run_count, worker_id))
 
         results = None
         try:

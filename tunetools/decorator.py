@@ -91,15 +91,29 @@ def _prepare_env(args):
     return inject_dict
 
 
-def _run(args):
+def _run_single(args, worker_id):
     injects = _prepare_env(args)
     tt.run(globals()['__main'],
            filter_function=globals().get('__filtering', None),
            num_sample=globals().get('__num_sample', 1),
            parameters=globals().get('__parameters', []),
            force_values=injects,
-           on_finish_function=globals().get('__onfinish', None))
+           on_finish_function=globals().get('__onfinish', None),
+           worker_id=worker_id)
 
+def _run(args):
+    if args.worker == 1:
+        _run_single(args, 0)
+    else:
+        import multiprocessing as mp
+        processes = []
+        for i in range(args.worker):
+            p = mp.Process(target=_run_single, args=(args, i))
+            p.daemon = True
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join()
 
 def _test(args):
     injects = _prepare_env(args)

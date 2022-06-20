@@ -25,7 +25,7 @@ def _check_param(param, total_param, mark_param: set):
     return new_param
 
 
-def _parse(conn, yaml_path):
+def _parse(conn, yaml_path, formatter, csv: bool):
     yml_dict = yaml.load(open(yaml_path), Loader=yaml.FullLoader)
 
     total_params = [x[6:] for x in db_utils.get_columns(conn, "RESULT") if x.startswith("param_")]
@@ -112,11 +112,11 @@ def _parse(conn, yaml_path):
                                  " on parameter '" + p + "' in group: " + str(current_group) +
                                  ", which may make the aggregated target inaccurate. " +
                                  "Please check it. You can add '" + p +
-                                 "' into 'find_best' or 'group_by' configurations, or filter "
+                                 "' into 'find_best', 'group_by' or 'ignore' configurations, or filter "
                                  "this case in 'where' configurations.")
 
         current_group.update(
-            dict(('ret_' + g, ArrayWrapper(list(df['ret_' + g]))) for g in target_result))
+            dict(('ret_' + g, ArrayWrapper(list(df['ret_' + g]), formatter)) for g in target_result))
         x = pd.Series(current_group)
         return x
 
@@ -129,7 +129,7 @@ def _parse(conn, yaml_path):
     if t_test_param is not None:
         t_test(data, dict([_singleton_dict_to_tuple(x) for x in t_test_param]), target_result)
 
-    print_group(data, mark_params)
+    print_group(data, mark_params, csv)
 
     draw_params = yml_dict.get("draw", None)
     if draw_params is not None:
@@ -137,7 +137,7 @@ def _parse(conn, yaml_path):
         draw(data, draw_params)
 
 
-def print_group(data: pd.DataFrame, mark_params):
+def print_group(data: pd.DataFrame, mark_params, csv: bool):
     group = data.copy()
     mark_params = ["param_" + x for x in mark_params]
     group.drop(labels=mark_params, axis=1, inplace=True)
@@ -145,7 +145,10 @@ def print_group(data: pd.DataFrame, mark_params):
                              filter(lambda x: x.startswith("param_"), group.columns)))
     group.columns = map(lambda x: x.replace("param_", "").replace("ret_", ""), group.columns)
     group = group.groupby(by=param_columns).agg('first')
-    print(group.to_string())
+    if csv:
+        print(group.to_csv())
+    else:
+        print(group.to_string())
 
 
 def t_test(data: pd.DataFrame, t_test_param, target_result):
@@ -177,7 +180,7 @@ def draw(data: pd.DataFrame, draw_params):
 
     x_name = "param_" + get_axis_index("x")
     y_name = "ret_" + get_axis_index("y")
-    legend_template = get_axis_index("legend")
+    legend_template = draw_params.get("legend", "")
     legend_to_xy = {}  # legend -> [x], [y]
     for _, record in data.iterrows():
         # legend = str(record[legend_names])
@@ -215,11 +218,17 @@ def draw_with_json(content, from_statistics=False):
     patterns = ["\\", ".", "o", "/", "+", "-", "*", "x", "O", "|"]
     marker = ['.', '+', '*', 'v', 'D', 'o', 'v', '1', '2', '3', '4']
     line_style = ['-', ':', '-.', '--', '-', ':', '-.', '--', '-', ':', '-.', '--']
+    has_legend = False
     for i, label in enumerate(legend_to_xy):
+        if label == "":
+            label_text = None
+        else:
+            label_text = label
+            has_legend = True
         cur_marker = legend_to_xy[label].get('marker', '')
         cur_line_style = legend_to_xy[label].get('line_style', '')
         cur_color = legend_to_xy[label].get('color', '')
-        plt.plot(legend_to_xy[label]['x'], legend_to_xy[label]['y'], label=label,
+        plt.plot(legend_to_xy[label]['x'], legend_to_xy[label]['y'], label=label_text,
                  marker=cur_marker if cur_marker != '' else marker[i],
                  linestyle=cur_line_style if cur_line_style != '' else line_style[i],
                  color=cur_color if cur_color != '' else None)
@@ -228,9 +237,6 @@ def draw_with_json(content, from_statistics=False):
                              legend_to_xy[label]['y_sup'],
                              legend_to_xy[label]['y_inf'],
                              alpha=0.2)
-
-    legend = plt.legend()
-    legend.get_frame().set_facecolor('none')
 
     if 'post_command' in content:
         for command in content['post_command']:
@@ -248,9 +254,10 @@ def draw_with_json(content, from_statistics=False):
 
 
 class ArrayWrapper:
-    def __init__(self, content):
+    def __init__(self, content, formatter: str):
         try:
             self._array = list(map(float, content))
+            self._formatter = formatter
             self._is_numeric = True
         except Exception:
             self._array = content
@@ -261,7 +268,7 @@ class ArrayWrapper:
 
     def __repr__(self):
         if self._is_numeric:
-            content = "[%d] %.4lf±%.4lf" % (self.count(), self.mean(), self.std())
+            content = self._formatter.format(count=self.count(), mean=self.mean(), std=self.std())
             if self._p_value is not None:
                 content += " (%.4lf)" % (self._p_value)
             return content
@@ -297,8 +304,3 @@ class ArrayWrapper:
         return self.__repr__()
 
 
-if __name__ == "__main__":
-    import sys, sqlite3
-
-    conn = sqlite3.connect("G:\\Rank\\temp\\temp\\ULTRA2\\.tune\\tune.db")
-    _parse(conn, "G:\\Rank\\temp\\temp\\ULTRA2\\config.yml")
