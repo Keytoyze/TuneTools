@@ -93,6 +93,8 @@ def _prepare_env(args):
 
 def _run_single(args, worker_id):
     injects = _prepare_env(args)
+    import time
+    time.sleep(worker_id * 2) # delay to avoid thread race
     tt.run(globals()['__main'],
            filter_function=globals().get('__filtering', None),
            num_sample=globals().get('__num_sample', 1),
